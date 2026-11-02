@@ -1,43 +1,48 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { pickQuestions, type Question } from "@/lib/questions";
-import type { IcebreakRequest, IcebreakResponse } from "@/lib/schema";
-import { RECORD_SECONDS, useSpeechTranscript } from "@/lib/useSpeechTranscript";
+import { pickRescueTopic } from "@/lib/rescue";
+import { PLAYER_LABELS, type IcebreakRequest, type IcebreakResponse } from "@/lib/schema";
+import { RECORD_SECONDS, useSpeechTranscript, type VoiceSummary } from "@/lib/useSpeechTranscript";
 
-type Step = "home" | "names" | "quiz" | "voice" | "loading" | "result";
-type Answer = { question: string; a: string; b: string };
+type Step = "home" | "quiz" | "voice" | "loading" | "result";
+type Answer = { question: string; left: string; right: string };
+type Side = 0 | 1;
+
+const [LEFT, RIGHT] = PLAYER_LABELS;
 
 export default function Home() {
   const [step, setStep] = useState<Step>("home");
-  const [names, setNames] = useState<[string, string]>(["", ""]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
-  const [transcript, setTranscript] = useState("");
+  const [voiceInput, setVoiceInput] = useState<{ transcript: string; voice: VoiceSummary | null }>({
+    transcript: "",
+    voice: null,
+  });
   const [result, setResult] = useState<IcebreakResponse | null>(null);
   const [previousTopics, setPreviousTopics] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-
-  const displayNames: [string, string] = [names[0].trim() || "Aさん", names[1].trim() || "Bさん"];
+  const [rescueOpen, setRescueOpen] = useState(false);
 
   function startQuiz() {
     setQuestions(pickQuestions());
     setAnswers([]);
-    setTranscript("");
+    setVoiceInput({ transcript: "", voice: null });
     setPreviousTopics([]);
     setResult(null);
     setError(null);
     setStep("quiz");
   }
 
-  async function generate(extra: { transcript?: string; previousTopics?: string[] } = {}) {
+  async function generate(input: { transcript: string; voice: VoiceSummary | null }, avoid?: string[]) {
     setError(null);
     setStep("loading");
     const body: IcebreakRequest = {
-      names,
       answers,
-      transcript: (extra.transcript ?? transcript) || undefined,
-      previousTopics: extra.previousTopics,
+      transcript: input.transcript || undefined,
+      voice: input.voice ?? undefined,
+      previousTopics: avoid,
     };
     try {
       const res = await fetch("/api/icebreak", {
@@ -60,57 +65,29 @@ export default function Home() {
     }
   }
 
+  const showRescue = step === "quiz" || step === "voice" || step === "result";
+
   return (
     <main className="app">
       {step === "home" && (
-        <section className="screen center">
-          <p className="tagline">沈黙を笑顔にする、対面型AIアイスブレイカー</p>
-          <h1 className="logo">LinkSide</h1>
-          <p className="lead">
-            スマホを2人のあいだに置いて、
-            <br />
-            タップで答えるだけ。
-            <br />
-            AI が共通点と話題を見つけます。
-          </p>
-          <button className="primary big" onClick={() => setStep("names")}>
+        <section className="screen center hero">
+          <h1 className="wordmark">LINKSIDE</h1>
+          <p className="tagline">～沈黙を笑顔にする、対面型アイスブレイカー～</p>
+          <div className="howto">
+            <p>📱 スマホを2人で並んでのぞきこもう</p>
+            <p>👆 タップするだけ。文字の入力はいりません</p>
+            <p>✨ AI が共通点と話題を見つけます</p>
+          </div>
+          <button className="primary big" onClick={startQuiz}>
             はじめる
           </button>
           <p className="note">登録はいりません</p>
         </section>
       )}
 
-      {step === "names" && (
-        <section className="screen center">
-          <h2>呼び方を決めよう</h2>
-          <p className="lead">ニックネームでOK。空欄のままでも遊べます。</p>
-          {[0, 1].map((i) => (
-            <label key={i} className="field">
-              <span>{i === 0 ? "手前の人" : "向かいの人"}</span>
-              <input
-                value={names[i]}
-                maxLength={20}
-                placeholder={i === 0 ? "Aさん" : "Bさん"}
-                onChange={(e) =>
-                  setNames((prev) => {
-                    const next: [string, string] = [...prev];
-                    next[i] = e.target.value;
-                    return next;
-                  })
-                }
-              />
-            </label>
-          ))}
-          <button className="primary big" onClick={startQuiz}>
-            つぎへ
-          </button>
-        </section>
-      )}
-
       {step === "quiz" && (
         <Quiz
           questions={questions}
-          names={displayNames}
           onDone={(list) => {
             setAnswers(list);
             setStep("voice");
@@ -121,9 +98,9 @@ export default function Home() {
       {step === "voice" && (
         <Voice
           error={error}
-          onSubmit={(text) => {
-            setTranscript(text);
-            void generate({ transcript: text });
+          onSubmit={(input) => {
+            setVoiceInput(input);
+            void generate(input);
           }}
         />
       )}
@@ -138,29 +115,28 @@ export default function Home() {
       {step === "result" && result && (
         <Result
           result={result}
-          names={displayNames}
           answers={answers}
           error={error}
-          onMore={() => void generate({ previousTopics })}
+          onMore={() => void generate(voiceInput, previousTopics)}
           onRestart={startQuiz}
         />
+      )}
+
+      {showRescue && !rescueOpen && (
+        <button className="rescue-fab" onClick={() => setRescueOpen(true)}>
+          <span aria-hidden>🛟</span> レスキュー
+        </button>
+      )}
+      {rescueOpen && (
+        <Rescue extraTopics={result?.topics.map((t) => t.question) ?? []} onClose={() => setRescueOpen(false)} />
       )}
     </main>
   );
 }
 
-// ---- 2人で同時に答える画面 ----
-// スマホを机に置いて向かい合う前提で、上半分は向かいの人向けに180度回転させる。
+// ---- 2人が並んで、それぞれの列をタップする画面 ----
 
-function Quiz({
-  questions,
-  names,
-  onDone,
-}: {
-  questions: Question[];
-  names: [string, string];
-  onDone: (answers: Answer[]) => void;
-}) {
+function Quiz({ questions, onDone }: { questions: Question[]; onDone: (answers: Answer[]) => void }) {
   const [index, setIndex] = useState(0);
   const [picks, setPicks] = useState<[string | null, string | null]>([null, null]);
   const [answers, setAnswers] = useState<Answer[]>([]);
@@ -168,19 +144,20 @@ function Quiz({
   const q = questions[index];
   const bothPicked = picks[0] !== null && picks[1] !== null;
   const matched = bothPicked && picks[0] === picks[1];
+  const isLast = index + 1 >= questions.length;
 
-  function pick(player: 0 | 1, choice: string) {
+  function pick(side: Side, choice: string) {
     if (bothPicked) return;
     setPicks((prev) => {
       const next: [string | null, string | null] = [...prev];
-      next[player] = choice;
+      next[side] = choice;
       return next;
     });
   }
 
   function next() {
-    const list = [...answers, { question: q.text, a: picks[0]!, b: picks[1]! }];
-    if (index + 1 >= questions.length) {
+    const list = [...answers, { question: q.text, left: picks[0]!, right: picks[1]! }];
+    if (isLast) {
       onDone(list);
       return;
     }
@@ -189,60 +166,61 @@ function Quiz({
     setPicks([null, null]);
   }
 
-  const half = (player: 0 | 1) => (
-    <div className={`half ${player === 1 ? "flipped" : ""}`}>
-      <p className="who">
-        {names[player]}
-        <span className="count">
-          {index + 1} / {questions.length}
-        </span>
+  return (
+    <section className="screen quiz">
+      <p className="progress">
+        しつもん {index + 1} / {questions.length}
       </p>
-      <p className="question">{q.text}</p>
-      <div className="choices">
-        {q.choices.map((c) => (
-          <button
-            key={c}
-            className={`choice ${picks[player] === c && bothPicked ? "picked" : ""}`}
-            disabled={picks[player] !== null}
-            onClick={() => pick(player, c)}
-          >
-            {c}
-          </button>
+      <h2 className="question">{q.text}</h2>
+
+      <div className="columns">
+        {([0, 1] as const).map((side) => (
+          <div key={side} className={`column side-${side}`}>
+            <p className="who">{PLAYER_LABELS[side]}</p>
+            {q.choices.map((c) => (
+              <button
+                key={c}
+                className={`choice ${picks[side] === c ? "picked" : ""}`}
+                aria-pressed={picks[side] === c}
+                disabled={bothPicked}
+                onClick={() => pick(side, c)}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
         ))}
       </div>
-      <p className="status">
-        {bothPicked
-          ? `相手は「${picks[player === 0 ? 1 : 0]}」`
-          : picks[player] !== null
-            ? "相手の回答を待っています…"
-            : "相手に見えないように選んでね"}
-      </p>
-    </div>
-  );
 
-  return (
-    <section className="quiz">
-      {half(1)}
-      <div className="divider">
+      <div className="quiz-footer">
         {bothPicked ? (
           <>
-            <span className={`verdict ${matched ? "match" : ""}`}>{matched ? "おそろい！" : "ちがった！"}</span>
-            <button className="primary" onClick={next}>
-              {index + 1 >= questions.length ? "結果へ" : "つぎの質問"}
+            <p className={`verdict ${matched ? "match" : ""}`}>{matched ? "🎉 おそろい！" : "ちがった！なんで？"}</p>
+            <button className="primary big" onClick={next}>
+              {isLast ? "けっかを見る" : "つぎのしつもん"}
             </button>
           </>
         ) : (
-          <span className="verdict">2人とも選んでね</span>
+          <p className="verdict">
+            {picks[0] === null && picks[1] === null
+              ? "2人とも、自分の列から選んでね"
+              : `${picks[0] === null ? LEFT : RIGHT}の番です`}
+          </p>
         )}
       </div>
-      {half(0)}
     </section>
   );
 }
 
 // ---- 10秒だけ会話を聞き取る画面（スキップ可） ----
 
-function Voice({ error, onSubmit }: { error: string | null; onSubmit: (transcript: string) => void }) {
+function Voice({
+  error,
+  onSubmit,
+}: {
+  error: string | null;
+  onSubmit: (input: { transcript: string; voice: VoiceSummary | null }) => void;
+}) {
   const speech = useSpeechTranscript();
   const done = !speech.recording && speech.transcript.length > 0;
 
@@ -252,7 +230,7 @@ function Voice({ error, onSubmit }: { error: string | null; onSubmit: (transcrip
       <p className="lead">
         「どうしてそれを選んだの？」など、なんでもOK。
         <br />
-        AI が会話の内容もふまえて話題を考えます。
+        AI が声の様子と言葉から話題を考えます。
       </p>
 
       {speech.supported === false && (
@@ -264,14 +242,18 @@ function Voice({ error, onSubmit }: { error: string | null; onSubmit: (transcrip
           <button
             className={`record ${speech.recording ? "on" : ""}`}
             onClick={speech.recording ? speech.stop : speech.start}
-            aria-label={speech.recording ? "録音を止める" : "録音をはじめる"}
+            aria-label={speech.recording ? "聞き取りを止める" : "聞き取りをはじめる"}
           >
-            {speech.recording ? speech.secondsLeft : "●"}
+            {speech.recording ? speech.secondsLeft : "🎤"}
           </button>
+          <div className="meter" aria-hidden>
+            <div className="meter-bar" style={{ transform: `scaleX(${speech.level})` }} />
+          </div>
           <p className="note">
             {speech.recording ? "聞き取り中… タップで止める" : `タップで${RECORD_SECONDS}秒間 聞き取ります`}
           </p>
           {speech.transcript && <p className="transcript">「{speech.transcript}」</p>}
+          {done && speech.voice && <p className="note">声の様子: {speech.voice.mood}</p>}
           {speech.error && <p className="error">{speech.error}</p>}
         </>
       )}
@@ -279,60 +261,61 @@ function Voice({ error, onSubmit }: { error: string | null; onSubmit: (transcrip
       {error && <p className="error">{error}</p>}
 
       <div className="row">
-        <button className="secondary" disabled={speech.recording} onClick={() => onSubmit("")}>
+        <button
+          className="secondary"
+          disabled={speech.recording}
+          onClick={() => onSubmit({ transcript: "", voice: null })}
+        >
           スキップ
         </button>
-        <button className="primary" disabled={!done} onClick={() => onSubmit(speech.transcript)}>
+        <button
+          className="primary"
+          disabled={!done}
+          onClick={() => onSubmit({ transcript: speech.transcript, voice: speech.voice })}
+        >
           この会話で話題を作る
         </button>
       </div>
-      <p className="note small">音声は保存しません。文字にした内容だけを AI に送ります。</p>
+      <p className="note small">音声は保存しません。文字にした内容と声の大きさの目安だけを AI に送ります。</p>
     </section>
   );
 }
 
 // ---- 結果画面 ----
 
-type Tab = "common" | "topics" | "game";
+type Tab = "common" | "topics" | "types" | "game";
 
 const TABS: ReadonlyArray<readonly [Tab, string]> = [
   ["common", "共通点"],
   ["topics", "話題"],
-  ["game", "ミニゲーム"],
+  ["types", "タイプ"],
+  ["game", "ゲーム"],
 ];
 
 function Result({
   result,
-  names,
   answers,
   error,
   onMore,
   onRestart,
 }: {
   result: IcebreakResponse;
-  names: [string, string];
   answers: Answer[];
   error: string | null;
   onMore: () => void;
   onRestart: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("common");
-  const [flipped, setFlipped] = useState(false);
-  const matchCount = answers.filter((x) => x.a === x.b).length;
+  const matchCount = answers.filter((x) => x.left === x.right).length;
 
   return (
-    <section className={`screen result ${flipped ? "flipped" : ""}`}>
-      <div className="result-head">
-        <p className="score">
-          {names[0]} × {names[1]}
-          <strong>
-            {matchCount} / {answers.length} 問おそろい
-          </strong>
-        </p>
-        <button className="icon" onClick={() => setFlipped(!flipped)} aria-label="画面を相手側に向ける">
-          ⇅
-        </button>
-      </div>
+    <section className="screen result">
+      <p className="score">
+        {LEFT} × {RIGHT}
+        <strong>
+          {matchCount} / {answers.length} 問おそろい
+        </strong>
+      </p>
 
       <div className="tabs" role="tablist">
         {TABS.map(([key, label]) => (
@@ -363,17 +346,38 @@ function Result({
               <p className="why">{t.why}</p>
             </article>
           ))}
+        {tab === "types" && (
+          <>
+            {(["left", "right"] as const).map((side, i) => {
+              const t = result.types[side];
+              return (
+                <article key={side} className={`card type side-${i}`}>
+                  <p className="who">{PLAYER_LABELS[i]}は…</p>
+                  <h3>{t.typeName}</h3>
+                  <p>{t.description}</p>
+                  <p className="surprise">
+                    <span>意外な一面</span>
+                    {t.surprise}
+                  </p>
+                </article>
+              );
+            })}
+            <article className="card chemistry">
+              <p>{result.types.chemistry}</p>
+            </article>
+          </>
+        )}
         {tab === "game" && <Minigame key={result.minigame.name} game={result.minigame} />}
       </div>
 
       {error && <p className="error">{error}</p>}
       {result.source === "local" && (
-        <p className="note small">いまは AI につながらないため、かんたんな方法で話題を作りました。</p>
+        <p className="note small">いまは AI につながらないため、かんたんな方法で作りました。</p>
       )}
 
       <div className="row">
         <button className="secondary" onClick={onRestart}>
-          質問からやり直す
+          しつもんから
         </button>
         <button className="primary" onClick={onMore}>
           別の話題を出す
@@ -383,24 +387,87 @@ function Result({
   );
 }
 
+// ---- 30秒ミニゲーム ----
+
+const GAME_SECONDS = 30;
+
 function Minigame({ game }: { game: IcebreakResponse["minigame"] }) {
   const [round, setRound] = useState(0);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const total = game.rounds.length;
-  const finished = round >= total;
+  const running = secondsLeft !== null && secondsLeft > 0;
+  const timeUp = secondsLeft === 0;
+
+  useEffect(() => {
+    if (!running) return;
+    const id = setTimeout(() => setSecondsLeft((s) => (s === null ? s : s - 1)), 1000);
+    return () => clearTimeout(id);
+  }, [running, secondsLeft]);
+
+  function start() {
+    setRound(0);
+    setSecondsLeft(GAME_SECONDS);
+  }
 
   return (
     <article className="card game">
       <h3>{game.name}</h3>
       <p>{game.rules}</p>
-      {total > 0 && (
+
+      {secondsLeft === null ? (
+        <button className="primary big" onClick={start}>
+          {GAME_SECONDS}秒スタート！
+        </button>
+      ) : (
         <>
-          <p className="round-label">{finished ? "クリア！" : `お題 ${round + 1} / ${total}`}</p>
-          <p className="round">{finished ? "おつかれさま！" : game.rounds[round]}</p>
-          <button className="primary" onClick={() => setRound(finished ? 0 : round + 1)}>
-            {finished ? "もう一回" : round + 1 < total ? "つぎのお題" : "おわり"}
-          </button>
+          <div className="timer" aria-live="polite">
+            <div className="timer-bar" style={{ transform: `scaleX(${secondsLeft / GAME_SECONDS})` }} />
+            <span>{timeUp ? "タイムアップ！" : `のこり ${secondsLeft} 秒`}</span>
+          </div>
+          {!timeUp && total > 0 && (
+            <>
+              <p className="round-label">
+                お題 {(round % total) + 1} / {total}
+              </p>
+              <p className="round">{game.rounds[round % total]}</p>
+              <button className="primary" onClick={() => setRound(round + 1)}>
+                つぎのお題
+              </button>
+            </>
+          )}
+          {timeUp && (
+            <>
+              <p className="round">おつかれさま！</p>
+              <button className="primary" onClick={start}>
+                もう一回
+              </button>
+            </>
+          )}
         </>
       )}
     </article>
+  );
+}
+
+// ---- レスキューボタン：話が途切れたらワンタップで話題 ----
+
+function Rescue({ extraTopics, onClose }: { extraTopics: string[]; onClose: () => void }) {
+  const [topic, setTopic] = useState(() => pickRescueTopic(extraTopics));
+
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="レスキュー話題" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <p className="sheet-label">🛟 この話題はどう？</p>
+        <p className="sheet-topic">{topic}</p>
+        <div className="row">
+          <button className="secondary" onClick={onClose}>
+            とじる
+          </button>
+          <button className="primary" onClick={() => setTopic(pickRescueTopic(extraTopics, topic))}>
+            べつの話題
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
