@@ -66,4 +66,6 @@ export type IcebreakResult = z.infer<typeof IcebreakResultSchema>;
 
 export type IcebreakResponse = IcebreakResult & {
   source: "ai" | "local";
+  // 保存されている API キーが使えなかったとき
+  keyInvalid?: boolean;
 };

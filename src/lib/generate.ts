@@ -1,16 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { NextResponse } from "next/server";
-import { buildLocalResult } from "@/lib/fallback";
+import { loadApiKey } from "./apiKey";
+import { buildLocalResult } from "./fallback";
 import {
-  IcebreakRequestSchema,
   IcebreakResultSchema,
   PLAYER_LABELS,
   type IcebreakRequest,
   type IcebreakResponse,
-} from "@/lib/schema";
-
-export const runtime = "nodejs";
+} from "./schema";
 
 const MODEL = "claude-opus-5-5";
 
@@ -36,8 +33,9 @@ function buildUserMessage(req: IcebreakRequest): string {
     "「どっち派？」の回答:",
     ...req.answers.map((x) => `- ${x.question} → ${left}: ${x.left} / ${right}: ${x.right}`),
   ];
-  if (req.transcript?.trim()) {
-    lines.push("", "直前の会話（約10秒の書き起こし）:", "<transcript>", req.transcript.trim(), "</transcript>");
+  const transcript = req.transcript?.trim().slice(0, 1000);
+  if (transcript) {
+    lines.push("", "直前の会話（約10秒の書き起こし）:", "<transcript>", transcript, "</transcript>");
   }
   if (req.voice) {
     lines.push(
@@ -51,21 +49,15 @@ function buildUserMessage(req: IcebreakRequest): string {
   return lines.join("\n");
 }
 
-export async function POST(request: Request) {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "リクエストの形式が正しくありません" }, { status: 400 });
-  }
-  const parsed = IcebreakRequestSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "入力内容が正しくありません" }, { status: 400 });
-  }
-  const req = parsed.data;
+// API キーがこの端末に保存されていれば Claude に聞き、なければ（または失敗したら）簡易ロジックで作る。
+export async function generateIcebreak(req: IcebreakRequest): Promise<IcebreakResponse> {
+  const apiKey = loadApiKey();
+  if (!apiKey) return { ...buildLocalResult(req), source: "local" };
 
   try {
-    const client = new Anthropic({ timeout: 30_000, maxRetries: 1 });
+    // GitHub Pages にはサーバーがないので、ブラウザから直接 Claude API を呼ぶ。
+    // キーはこの端末の中にだけあり、サイトには含まれない。
+    const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, timeout: 30_000, maxRetries: 1 });
     const response = await client.beta.messages.parse({
       model: MODEL,
       max_tokens: 4000,
@@ -80,12 +72,13 @@ export async function POST(request: Request) {
 
     if (response.stop_reason === "refusal" || !response.parsed_output) {
       console.warn("AI の結果を使えませんでした:", response.stop_reason);
-      return NextResponse.json<IcebreakResponse>({ ...buildLocalResult(req), source: "local" });
+      return { ...buildLocalResult(req), source: "local" };
     }
-    return NextResponse.json<IcebreakResponse>({ ...response.parsed_output, source: "ai" });
+    return { ...response.parsed_output, source: "ai" };
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError) {
-      console.error("Claude API の認証に失敗しました。ANTHROPIC_API_KEY を確認してください。");
+      console.error("Claude API の認証に失敗しました。API キーを確認してください。");
+      return { ...buildLocalResult(req), source: "local", keyInvalid: true };
     } else if (error instanceof Anthropic.RateLimitError) {
       console.error("Claude API の利用上限に達しました。");
     } else if (error instanceof Anthropic.APIError) {
@@ -94,6 +87,6 @@ export async function POST(request: Request) {
       console.error("Claude API の呼び出しに失敗しました:", error);
     }
     // AI が使えなくてもその場が止まらないよう、手元のロジックで返す
-    return NextResponse.json<IcebreakResponse>({ ...buildLocalResult(req), source: "local" });
+    return { ...buildLocalResult(req), source: "local" };
   }
 }

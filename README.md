@@ -26,17 +26,36 @@
 | --- | --- |
 | 画面 | Next.js（App Router）、React、TypeScript |
 | 10秒の聞き取り | ブラウザの音声認識（Web Speech API）で文字にし、マイクの音量から声の様子を推定します。音声そのものは保存も送信もしません |
-| AI | Claude API（`claude-opus-5-5`）。決まった形の JSON で結果を返させています |
-| AI が使えないとき | API キーがないときや通信エラーのときは、回答だけから話題を作る簡易ロジックに切り替わります |
+| AI | Claude API（`claude-opus-5-5`）。ブラウザから直接呼び、決まった形の JSON で結果を返させています |
+| AI が使えないとき | API キーを設定していないときや通信エラーのときは、回答だけから結果を作る簡易ロジックで動きます |
+| 公開 | GitHub Pages（静的なファイルとして書き出し、`main` に入ると自動で公開） |
 
 主なファイル:
 
 - `src/app/page.tsx` … 画面全体（スタート → 質問 → 聞き取り → 結果、レスキューボタン）
-- `src/app/api/icebreak/route.ts` … Claude に話題を作らせるサーバー側の処理
+- `src/lib/generate.ts` … Claude に結果を作らせる処理（キーがなければ簡易ロジック）
+- `src/lib/apiKey.ts` … API キーをこの端末にだけ保存する
 - `src/lib/questions.ts` … 「どっち派？」の質問一覧（ここを編集すると質問を増やせます）
 - `src/lib/rescue.ts` … レスキューボタンの話題一覧
 - `src/lib/fallback.ts` … AI が使えないときの簡易ロジック
 - `src/lib/useSpeechTranscript.ts` … 10秒の聞き取り
+
+## 公開する（GitHub Pages）
+
+1. GitHub のリポジトリで **Settings → Pages** を開き、「Build and deployment」の **Source** を **GitHub Actions** にする（最初の1回だけ）
+2. `main` に変更が入ると、`.github/workflows/pages.yml` が自動でビルドして公開します
+3. 公開先: https://vtmacs.github.io/shidojin/
+
+## AI を使う
+
+GitHub Pages にはサーバーがないため、API キーをサイトに入れることはできません。代わりに、使う端末にだけキーを保存します。
+
+1. https://console.anthropic.com で Claude API のキーを作る（利用額の上限も決めておくと安心です）
+2. アプリのスタート画面の「AI を使う設定」を押し、キーを入れて保存する
+3. その端末では AI モードになります。キーはその端末のブラウザの中だけに保存され、他の人がサイトを開いても見えません
+
+キーを設定していない端末では、AI を使わない簡易ロジックで全部の機能が動きます。
+キーは自分の端末でだけ設定してください（人に貸すスマホや共用のパソコンには入れないでください）。
 
 ## 手元で動かす
 
@@ -44,19 +63,10 @@ Node.js 20 以上が必要です。
 
 ```bash
 npm install
-cp .env.example .env.local   # ANTHROPIC_API_KEY に Claude API のキーを入れる
 npm run dev
 ```
 
 ブラウザで http://localhost:3000 を開きます。
 
 音声の聞き取りは Chrome、Edge、Safari で動きます（Firefox は非対応で、スキップして使えます）。
-スマホで試すときは、マイクを使うために HTTPS で開く必要があります。下の Vercel で公開するのが簡単です。
-
-## 公開する（Vercel）
-
-1. https://vercel.com に GitHub アカウントでログインし、このリポジトリを読み込む
-2. 「Environment Variables」に `ANTHROPIC_API_KEY` を追加する
-3. Deploy を押すと、スマホからそのまま開ける URL ができます
-
-API キーはサーバー側だけで使い、ブラウザには送りません。
+スマホでマイクを使うには HTTPS で開く必要があるので、GitHub Pages で公開したものを使うのが簡単です。

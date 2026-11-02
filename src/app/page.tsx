@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { clearApiKey, loadApiKey, saveApiKey } from "@/lib/apiKey";
+import { generateIcebreak } from "@/lib/generate";
 import { pickQuestions, type Question } from "@/lib/questions";
 import { pickRescueTopic } from "@/lib/rescue";
 import { PLAYER_LABELS, type IcebreakRequest, type IcebreakResponse } from "@/lib/schema";
@@ -24,6 +26,10 @@ export default function Home() {
   const [previousTopics, setPreviousTopics] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [rescueOpen, setRescueOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hasKey, setHasKey] = useState(false);
+
+  useEffect(() => setHasKey(loadApiKey() !== null), []);
 
   function startQuiz() {
     setQuestions(pickQuestions());
@@ -45,13 +51,7 @@ export default function Home() {
       previousTopics: avoid,
     };
     try {
-      const res = await fetch("/api/icebreak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as IcebreakResponse;
+      const data = await generateIcebreak(body);
       setResult(data);
       setPreviousTopics((prev) => [
         ...prev,
@@ -82,6 +82,9 @@ export default function Home() {
             はじめる
           </button>
           <p className="note">登録はいりません</p>
+          <button className="link" onClick={() => setSettingsOpen(true)}>
+            {hasKey ? "✅ AI モード（この端末）" : "AI を使う設定"}
+          </button>
         </section>
       )}
 
@@ -126,6 +129,13 @@ export default function Home() {
         <button className="rescue-fab" onClick={() => setRescueOpen(true)}>
           <span aria-hidden>🛟</span> レスキュー
         </button>
+      )}
+      {settingsOpen && (
+        <Settings
+          hasKey={hasKey}
+          onChange={() => setHasKey(loadApiKey() !== null)}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
       {rescueOpen && (
         <Rescue extraTopics={result?.topics.map((t) => t.question) ?? []} onClose={() => setRescueOpen(false)} />
@@ -371,8 +381,10 @@ function Result({
       </div>
 
       {error && <p className="error">{error}</p>}
-      {result.source === "local" && (
-        <p className="note small">いまは AI につながらないため、かんたんな方法で作りました。</p>
+      {result.keyInvalid ? (
+        <p className="error">保存されている API キーが使えませんでした。スタート画面の設定から確認してください。</p>
+      ) : (
+        result.source === "local" && <p className="note small">AI を使わず、かんたんな方法で作りました。</p>
       )}
 
       <div className="row">
@@ -467,6 +479,83 @@ function Rescue({ extraTopics, onClose }: { extraTopics: string[]; onClose: () =
             べつの話題
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- AI の設定：持ち主の端末にだけ API キーを保存する ----
+
+function Settings({ hasKey, onChange, onClose }: { hasKey: boolean; onChange: () => void; onClose: () => void }) {
+  const [value, setValue] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+
+  function save() {
+    if (!value.trim().startsWith("sk-ant-")) {
+      setMessage("Claude API のキー（sk-ant- で始まる文字列）を入れてください。");
+      return;
+    }
+    if (!saveApiKey(value)) {
+      setMessage("この端末には保存できませんでした（プライベートブラウズでは保存できないことがあります）。");
+      return;
+    }
+    setValue("");
+    setMessage(null);
+    onChange();
+    onClose();
+  }
+
+  function remove() {
+    clearApiKey();
+    onChange();
+  }
+
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="AI の設定" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <p className="sheet-label">AI の設定</p>
+        <p className="settings-text">
+          AI を使うと、ふたりに合わせた共通点・話題・タイプ診断・ミニゲームを作れます。設定しなくても、かんたんな方法で全部の機能を使えます。
+        </p>
+        {hasKey ? (
+          <>
+            <p className="settings-status">✅ この端末に API キーが保存されています</p>
+            <div className="row">
+              <button className="secondary" onClick={remove}>
+                キーを消す
+              </button>
+              <button className="primary" onClick={onClose}>
+                とじる
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <label className="field">
+              <span>Claude API のキー</span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder="sk-ant-..."
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+              />
+            </label>
+            {message && <p className="error">{message}</p>}
+            <p className="note small">
+              キーはこの端末のブラウザの中だけに保存され、サイトには載りません。自分の端末でだけ設定し、Claude Console
+              で利用額の上限を決めておくと安心です。
+            </p>
+            <div className="row">
+              <button className="secondary" onClick={onClose}>
+                とじる
+              </button>
+              <button className="primary" onClick={save}>
+                保存する
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
