@@ -212,6 +212,45 @@ h2 {
   color: rgb(255 255 255 / 0.85);
 }
 
+.link {
+  min-height: 44px;
+  padding: 8px 16px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  font-size: 0.95rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.field input {
+  min-height: 52px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 2px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-text {
+  font-size: 0.95rem;
+}
+
+.settings-status {
+  font-weight: 700;
+}
+
 /* ---- しつもん画面（2人で並んで見る） ---- */
 
 .progress {
